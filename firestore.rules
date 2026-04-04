@@ -1,0 +1,148 @@
+// Collection: subscriptions
+// Document ID: subscriptionId
+// Fields:
+//   - userId: string (required)
+//   - planId: string (required)
+//   - paymentId: string (required)
+//   - status: string (required, 'active' or 'expired')
+//   - amount: number (required)
+//   - createdAt: timestamp (required)
+//   - expiresAt: timestamp (required)
+//
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: userId
+// Fields:
+//   - id: string (required)
+//   - name: string (required)
+//   - email: string (required, email format)
+//   - photo: string (optional)
+//   - role: string (required, 'user' or 'admin')
+//   - createdAt: timestamp (required)
+//
+// Collection: products
+// Document ID: productId
+// Fields:
+//   - id: string (required)
+//   - title: string (required)
+//   - description: string (required)
+//   - price: number (required, positive)
+//   - type: string (required, 'video', 'app', 'link', 'file')
+//   - thumbnail: string (required, URL)
+//   - contentUrl: string (required, URL or hidden link)
+//   - createdAt: timestamp (required)
+//
+// Collection: purchases
+// Document ID: purchaseId
+// Fields:
+//   - id: string (required)
+//   - userId: string (required)
+//   - productId: string (required)
+//   - paymentId: string (required)
+//   - status: string (required, 'success' or 'failed')
+//   - amount: number (required)
+//   - createdAt: timestamp (required)
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "bindhanibikash71@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'name', 'email', 'role', 'createdAt']) &&
+             data.id is string && data.name is string && data.name.size() > 0 &&
+             isValidEmail(data.email) &&
+             data.role in ['user', 'admin'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['id', 'title', 'description', 'price', 'type', 'thumbnail', 'contentUrl', 'createdAt']) &&
+             data.id is string && data.title is string && data.title.size() > 0 &&
+             data.description is string &&
+             data.price is number && data.price >= 0 &&
+             data.type in ['video', 'app', 'link', 'file'] &&
+             isValidUrl(data.thumbnail) &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidPurchase(data) {
+      return data.keys().hasAll(['id', 'userId', 'productId', 'paymentId', 'status', 'amount', 'createdAt']) &&
+             data.id is string && data.userId is string &&
+             data.productId is string && data.paymentId is string &&
+             data.status in ['success', 'failed'] &&
+             data.amount is number && data.amount >= 0 &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidSubscription(data) {
+      return data.keys().hasAll(['userId', 'planId', 'paymentId', 'status', 'amount', 'createdAt', 'expiresAt']) &&
+             data.userId is string && data.planId is string &&
+             data.paymentId is string && data.status in ['active', 'expired'] &&
+             data.amount is number && data.amount >= 0 &&
+             data.createdAt is timestamp && data.expiresAt is timestamp;
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && request.resource.data.role == 'user';
+      allow update: if isAuthenticated() && (isOwner(userId) || isAdmin()) && isValidUser(request.resource.data) && 
+                    (isAdmin() || request.resource.data.role == resource.data.role);
+    }
+
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin() && isValidProduct(request.resource.data);
+    }
+
+    match /purchases/{purchaseId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId && isValidPurchase(request.resource.data);
+      allow update: if isAdmin() && isValidPurchase(request.resource.data);
+    }
+
+    match /subscriptions/{subscriptionId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.userId && isValidSubscription(request.resource.data);
+      allow update: if isAdmin() && isValidSubscription(request.resource.data);
+    }
+  }
+}

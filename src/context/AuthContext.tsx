@@ -1,0 +1,117 @@
+import React, { createContext, useContext, useEffect, useState } from "react";
+import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
+import { doc, getDoc, setDoc, serverTimestamp, query, collection, where, orderBy, limit, getDocs } from "firebase/firestore";
+import { auth, db, googleProvider } from "../firebase";
+import { User } from "../types";
+
+interface AuthContextType {
+  user: User | null;
+  subscription: any | null;
+  loading: boolean;
+  login: () => Promise<void>;
+  guestLogin: () => void;
+  logout: () => Promise<void>;
+  isAdmin: boolean;
+  isGuest: boolean;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null);
+  const [subscription, setSubscription] = useState<any | null>(null);
+  const [isGuest, setIsGuest] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const guestStatus = localStorage.getItem("isGuest") === "true";
+    if (guestStatus) {
+      setIsGuest(true);
+    }
+
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        setIsGuest(false);
+        localStorage.removeItem("isGuest");
+        
+        // Fetch user doc
+        const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
+        if (userDoc.exists()) {
+          setUser(userDoc.data() as User);
+        } else {
+          const newUser: User = {
+            id: firebaseUser.uid,
+            name: firebaseUser.displayName || "Anonymous",
+            email: firebaseUser.email || "",
+            photo: firebaseUser.photoURL || "",
+            role: "user",
+            createdAt: serverTimestamp(),
+          };
+          await setDoc(doc(db, "users", firebaseUser.uid), newUser);
+          setUser(newUser);
+        }
+
+        // Fetch active subscription
+        const subQuery = query(
+          collection(db, "subscriptions"), 
+          where("userId", "==", firebaseUser.uid),
+          where("status", "==", "active"),
+          orderBy("expiresAt", "desc"),
+          limit(1)
+        );
+        const subSnap = await getDocs(subQuery);
+        if (!subSnap.empty) {
+          const subData = subSnap.docs[0].data();
+          if (subData.expiresAt.toDate() > new Date()) {
+            setSubscription({ id: subSnap.docs[0].id, ...subData });
+          }
+        }
+      } else {
+        setUser(null);
+        setSubscription(null);
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const login = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error("Login Error:", error);
+    }
+  };
+
+  const guestLogin = () => {
+    setIsGuest(true);
+    localStorage.setItem("isGuest", "true");
+  };
+
+  const logout = async () => {
+    try {
+      await signOut(auth);
+      setIsGuest(false);
+      localStorage.removeItem("isGuest");
+    } catch (error) {
+      console.error("Logout Error:", error);
+    }
+  };
+
+  const isAdmin = user?.role === "admin" || user?.email === "bindhanibikash71@gmail.com";
+
+  return (
+    <AuthContext.Provider value={{ user, subscription, loading, login, guestLogin, logout, isAdmin, isGuest }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+  return context;
+};

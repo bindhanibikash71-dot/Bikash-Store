@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "photo": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "email", "role", "createdAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Digital product for sale.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "type": { "type": "string", "enum": ["video", "app", "link", "file"] },
+        "thumbnail": { "type": "string" },
+        "contentUrl": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "price", "type", "thumbnail", "contentUrl", "createdAt"]
+    },
+    "Purchase": {
+      "title": "Purchase",
+      "description": "Record of a product purchase.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "productId": { "type": "string" },
+        "paymentId": { "type": "string" },
+        "status": { "type": "string", "enum": ["success", "failed"] },
+        "amount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "productId", "paymentId", "status", "amount", "createdAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "User profiles."
+    },
+    "products/{productId}": {
+      "schema": "Product",
+      "description": "Available digital products."
+    },
+    "purchases/{purchaseId}": {
+      "schema": "Purchase",
+      "description": "Purchase history."
+    }
+  }
+}
