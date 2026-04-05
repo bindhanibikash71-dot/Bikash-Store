@@ -3,6 +3,7 @@ import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
 import { doc, getDoc, setDoc, serverTimestamp, query, collection, where, orderBy, limit, getDocs } from "firebase/firestore";
 import { auth, db, googleProvider } from "../firebase";
 import { User } from "../types";
+import { toast } from "react-hot-toast";
 
 interface AuthContextType {
   user: User | null;
@@ -30,47 +31,58 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        setIsGuest(false);
-        localStorage.removeItem("isGuest");
-        
-        // Fetch user doc
-        const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
-        if (userDoc.exists()) {
-          setUser(userDoc.data() as User);
-        } else {
-          const newUser: User = {
-            id: firebaseUser.uid,
-            name: firebaseUser.displayName || "Anonymous",
-            email: firebaseUser.email || "",
-            photo: firebaseUser.photoURL || "",
-            role: "user",
-            createdAt: serverTimestamp(),
-          };
-          await setDoc(doc(db, "users", firebaseUser.uid), newUser);
-          setUser(newUser);
-        }
-
-        // Fetch active subscription
-        const subQuery = query(
-          collection(db, "subscriptions"), 
-          where("userId", "==", firebaseUser.uid),
-          where("status", "==", "active"),
-          orderBy("expiresAt", "desc"),
-          limit(1)
-        );
-        const subSnap = await getDocs(subQuery);
-        if (!subSnap.empty) {
-          const subData = subSnap.docs[0].data();
-          if (subData.expiresAt.toDate() > new Date()) {
-            setSubscription({ id: subSnap.docs[0].id, ...subData });
+      try {
+        if (firebaseUser) {
+          setIsGuest(false);
+          localStorage.removeItem("isGuest");
+          
+          // Fetch user doc
+          const userDocRef = doc(db, "users", firebaseUser.uid);
+          const userDoc = await getDoc(userDocRef);
+          
+          if (userDoc.exists()) {
+            setUser(userDoc.data() as User);
+          } else {
+            const newUser: User = {
+              id: firebaseUser.uid,
+              name: firebaseUser.displayName || "Anonymous",
+              email: firebaseUser.email || "",
+              photo: firebaseUser.photoURL || "",
+              role: "user",
+              createdAt: serverTimestamp(),
+            };
+            await setDoc(userDocRef, newUser);
+            setUser(newUser);
           }
+
+          // Fetch active subscription
+          try {
+            const subQuery = query(
+              collection(db, "subscriptions"), 
+              where("userId", "==", firebaseUser.uid),
+              where("status", "==", "active"),
+              orderBy("expiresAt", "desc"),
+              limit(1)
+            );
+            const subSnap = await getDocs(subQuery);
+            if (!subSnap.empty) {
+              const subData = subSnap.docs[0].data();
+              if (subData.expiresAt?.toDate() > new Date()) {
+                setSubscription({ id: subSnap.docs[0].id, ...subData });
+              }
+            }
+          } catch (subError) {
+            console.warn("Subscription fetch failed (might need index):", subError);
+          }
+        } else {
+          setUser(null);
+          setSubscription(null);
         }
-      } else {
-        setUser(null);
-        setSubscription(null);
+      } catch (error) {
+        console.error("Auth State Change Error:", error);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => unsubscribe();
@@ -78,9 +90,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async () => {
     try {
+      setLoading(true);
       await signInWithPopup(auth, googleProvider);
-    } catch (error) {
+      toast.success("Logged in successfully!");
+    } catch (error: any) {
       console.error("Login Error:", error);
+      if (error.code === "auth/popup-blocked") {
+        toast.error("Pop-up blocked! Please allow pop-ups for this site.");
+      } else if (error.code === "auth/unauthorized-domain") {
+        toast.error("This domain is not authorized in Firebase Console.");
+      } else {
+        toast.error("Login failed: " + (error.message || "Unknown error"));
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
