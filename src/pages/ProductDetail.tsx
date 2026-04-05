@@ -89,7 +89,7 @@ const ProductDetail: React.FC = () => {
       const { payment_session_id, order_id } = orderResponse.data;
 
       const cashfree = await loadCashfree({
-        mode: "sandbox", // or "production"
+        mode: import.meta.env.VITE_CASHFREE_ENVIRONMENT === "PRODUCTION" ? "production" : "sandbox",
       });
 
       const checkoutOptions = {

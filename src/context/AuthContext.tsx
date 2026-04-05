@@ -31,16 +31,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      console.log("Auth State Changed:", firebaseUser?.email || "No User");
       try {
         if (firebaseUser) {
           setIsGuest(false);
           localStorage.removeItem("isGuest");
           
-          // Fetch user doc
+          // Fetch user doc with a timeout/safety check
           const userDocRef = doc(db, "users", firebaseUser.uid);
-          const userDoc = await getDoc(userDocRef);
+          let userDoc;
+          try {
+            userDoc = await getDoc(userDocRef);
+          } catch (err) {
+            console.error("Firestore GetDoc Error:", err);
+            // Fallback to basic user info if Firestore fails
+            const fallbackUser: User = {
+              id: firebaseUser.uid,
+              name: firebaseUser.displayName || "User",
+              email: firebaseUser.email || "",
+              photo: firebaseUser.photoURL || "",
+              role: "user",
+              createdAt: serverTimestamp(),
+            };
+            setUser(fallbackUser);
+            setLoading(false);
+            return;
+          }
           
-          if (userDoc.exists()) {
+          if (userDoc && userDoc.exists()) {
             setUser(userDoc.data() as User);
           } else {
             const newUser: User = {
@@ -51,29 +69,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               role: "user",
               createdAt: serverTimestamp(),
             };
-            await setDoc(userDocRef, newUser);
+            // Try to create user doc but don't block the UI
+            setDoc(userDocRef, newUser).catch(err => console.error("Error creating user doc:", err));
             setUser(newUser);
           }
 
-          // Fetch active subscription
-          try {
-            const subQuery = query(
-              collection(db, "subscriptions"), 
-              where("userId", "==", firebaseUser.uid),
-              where("status", "==", "active"),
-              orderBy("expiresAt", "desc"),
-              limit(1)
-            );
-            const subSnap = await getDocs(subQuery);
-            if (!subSnap.empty) {
-              const subData = subSnap.docs[0].data();
-              if (subData.expiresAt?.toDate() > new Date()) {
-                setSubscription({ id: subSnap.docs[0].id, ...subData });
+          // Fetch active subscription (non-blocking)
+          const fetchSub = async () => {
+            try {
+              const subQuery = query(
+                collection(db, "subscriptions"), 
+                where("userId", "==", firebaseUser.uid),
+                where("status", "==", "active"),
+                orderBy("expiresAt", "desc"),
+                limit(1)
+              );
+              const subSnap = await getDocs(subQuery);
+              if (!subSnap.empty) {
+                const subData = subSnap.docs[0].data();
+                if (subData.expiresAt?.toDate() > new Date()) {
+                  setSubscription({ id: subSnap.docs[0].id, ...subData });
+                }
               }
+            } catch (subError) {
+              console.warn("Subscription fetch failed:", subError);
             }
-          } catch (subError) {
-            console.warn("Subscription fetch failed (might need index):", subError);
-          }
+          };
+          fetchSub();
         } else {
           setUser(null);
           setSubscription(null);
@@ -85,7 +107,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
 
-    return () => unsubscribe();
+    // Safety timeout: If Firebase doesn't respond in 8 seconds, stop loading
+    const timeoutId = setTimeout(() => {
+      setLoading(false);
+    }, 8000);
+
+    return () => {
+      unsubscribe();
+      clearTimeout(timeoutId);
+    };
   }, []);
 
   const login = async () => {
